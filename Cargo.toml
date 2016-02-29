@@ -1,0 +1,8 @@
+[package]
+name = "gif-frame-normalizer"
+version = "0.1.0"
+authors = ["Isphirel Spaceships <isphirel@recon.goonswarm.com>"]
+
+[dependencies]
+
+gif = "0.8"
