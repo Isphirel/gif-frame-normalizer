@@ -6,7 +6,8 @@ use std::io::Write;
 #[derive(Debug)]
 enum Err {
     Io(io::Error),
-    Gif(gif::DecodingError)
+    Gif(gif::DecodingError),
+    Usage
 }
 impl error::Error for Err {
     fn description(&self) -> &str { "welp" }
@@ -25,7 +26,8 @@ impl fmt::Display for Err {
             | Err::Gif(gif::DecodingError::Io(ref e)) => e.fmt(f),
             Err::Gif(gif::DecodingError::Format(s))
             | Err::Gif(gif::DecodingError::Internal(s)) =>
-                write!(f, "gif decoding error: {}", s)
+                write!(f, "gif decoding error: {}", s),
+            Err::Usage => write!(f, "usage: pass one file.gif, read stdout")
         }
     }
 }
@@ -37,25 +39,22 @@ fn main() {
     }
 
     fn go() -> Result<(), Err> {
-        try!(fs::create_dir_all("out"));
-        for arg in std::env::args_os().skip(1) {
-            let path: &path::Path = arg.as_ref();
+        let mut args = std::env::args_os().skip(1);
+        let arg = match (args.next(), args.next()) {
+            (Some(arg), None) => arg,
+            _ => return Err(Err::Usage)
+        };
 
-            let file_name = match path.file_name() {
-                None => continue,
-                Some(f) => path::Path::new(f)
-            };
+        let path: &path::Path = arg.as_ref();
 
-            let ext = file_name.extension().and_then(ffi::OsStr::to_str);
-            if ext != Some("gif") { continue; }
+        let file_name = path::Path::new(
+            try!(path.file_name().ok_or(Err::Usage)));
 
-            let out = path::Path::new("out").join(file_name);
+        let ext = file_name.extension().and_then(ffi::OsStr::to_str);
+        if ext != Some("gif") { return Err(Err::Usage); }
 
-            if let Err(e) = process(path, &out) {
-                try!(writeln!(io::stderr(), "{}: couldn't process: {}",
-                    file_name.display(), e));
-            }
-        }
+        try!(process(path));
+
         Ok(())
     }
 }
@@ -107,7 +106,7 @@ fn swap_transparent(mut frame: gif::Frame) -> gif::Frame {
     frame
 }
 
-fn process<P: AsRef<path::Path>>(from: P, into: P) -> Result<bool, Err> {
+fn process<P: AsRef<path::Path>>(from: P) -> Result<bool, Err> {
     const MIN_DELAY: u16 = 2;
     const ZERO_DELAY: u16 = 10;
 
@@ -148,8 +147,7 @@ fn process<P: AsRef<path::Path>>(from: P, into: P) -> Result<bool, Err> {
             global_palette_swapped.as_slice()
         };
 
-    let into = into.as_ref();
-    let mut encoder = try!(gif::Encoder::new(try!(fs::File::create(into)),
+    let mut encoder = try!(gif::Encoder::new(io::stdout(),
         decoder.width(), decoder.height(), global_palette));
 
     try!(gif::SetParameter::set(&mut encoder, gif::Repeat::Infinite));
@@ -213,11 +211,7 @@ fn process<P: AsRef<path::Path>>(from: P, into: P) -> Result<bool, Err> {
         };
 
         for frame in frames {
-            if let Err(e) = encoder.write_frame(frame) {
-                drop(encoder);
-                let _ = fs::remove_file(into);
-                return Err(e.into());
-            }
+            try!(encoder.write_frame(frame));
         }
     }
 
